@@ -1,13 +1,15 @@
-use rusqlite::{Connection};
+use rusqlite::Connection;
 
 fn main() {
-    if let Err(err) = execute() { println!("{}", err) }
+    if let Err(err) = execute() {
+        println!("{}", err)
+    }
 }
 
 fn execute() -> Result<(), String> {
     let branch = match git::get_current_branch() {
         Ok(branch) => branch,
-        Err(err) => return Err(format!("failed to get current branch: {}", err))
+        Err(err) => return Err(format!("failed to get current branch: {}", err)),
     };
 
     let db = Database::create_connection(".git/info/todo.sqlite")?;
@@ -24,11 +26,19 @@ fn execute() -> Result<(), String> {
         }
         Command::Todo(content) => {
             let affects = db.create_todo(&branch, &content);
-            if affects > 0 { println!("Added it!") } else { println!("Nothing is added!") };
+            if affects > 0 {
+                println!("Added it!")
+            } else {
+                println!("Nothing is added!")
+            };
         }
         Command::Done(index) => {
             let affects = db.delete_todo(&branch, index)?;
-            if affects > 0 { println!("DONE! Good Job!") } else { println!("Nothing is DONE!") };
+            if affects > 0 {
+                println!("DONE! Good Job!")
+            } else {
+                println!("Nothing is DONE!")
+            };
         }
         Command::Help => {
             println!("Usage: todo [command] [args]");
@@ -84,32 +94,42 @@ impl Database {
     }
 
     fn create_table_if_not_exists(&self) -> usize {
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS todos (
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             branch TEXT NOT NULL,
             content TEXT NOT NULL
         )",
-            (),
-        ).unwrap_or_default()
+                (),
+            )
+            .unwrap_or_default()
     }
 
     fn create_todo(&self, branch: &str, content: &str) -> usize {
-        self.conn.execute(
-            "INSERT INTO todos (branch, content) VALUES (?1, ?2)",
-            (branch, content),
-        ).unwrap_or_default()
+        self.conn
+            .execute(
+                "INSERT INTO todos (branch, content) VALUES (?1, ?2)",
+                (branch, content),
+            )
+            .unwrap_or_default()
     }
 
     fn list_todos_on_branch(&self, branch: &str) -> Result<Vec<Todo>, String> {
-        let mut stmt = self.conn.prepare("SELECT id, branch, content FROM todos WHERE branch = ?1 ORDER BY id ASC").unwrap();
-        let todos = stmt
-            .query_map([branch, ], |row| {
-                Ok(Todo { id: row.get(0)?, branch: row.get(1)?, content: row.get(2)? })
-            });
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, branch, content FROM todos WHERE branch = ?1 ORDER BY id ASC")
+            .unwrap();
+        let todos = stmt.query_map([branch], |row| {
+            Ok(Todo {
+                id: row.get(0)?,
+                branch: row.get(1)?,
+                content: row.get(2)?,
+            })
+        });
         let todos = match todos {
             Ok(todos) => todos,
-            Err(err) => return Err(format!("failed to list items: {}", err))
+            Err(err) => return Err(format!("failed to list items: {}", err)),
         };
         let todos = todos.into_iter().map(|todo| todo.unwrap()).collect();
         Ok(todos)
@@ -120,7 +140,10 @@ impl Database {
         let items = items.iter().enumerate();
         for (index, item) in items {
             if index + 1 == order_number as usize {
-                return Ok(self.conn.execute("DELETE FROM todos WHERE id = ?1", (item.id,)).unwrap_or_default());
+                return Ok(self
+                    .conn
+                    .execute("DELETE FROM todos WHERE id = ?1", (item.id,))
+                    .unwrap_or_default());
             }
         }
         Ok(0)
@@ -148,6 +171,9 @@ mod git {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             return Ok(branch);
         }
-        Err(format!("failed to execute 'git symbolic-ref --short HEAD': {}", output.status))
+        Err(format!(
+            "failed to execute 'git symbolic-ref --short HEAD': {}",
+            output.status
+        ))
     }
 }
