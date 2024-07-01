@@ -1,53 +1,44 @@
 use rusqlite::{Connection};
 
 fn main() {
-    match execute() {
-        Ok(_) => {}
-        Err(err) => { println!("{}", err) }
-    }
+    if let Err(err) = execute() { println!("{}", err) }
 }
 
 fn execute() -> Result<(), String> {
-    let branch = match Git::get_current_branch() {
+    let branch = match git::get_current_branch() {
         Ok(branch) => branch,
         Err(err) => return Err(format!("failed to get current branch: {}", err))
     };
 
-    let db = Database::create_connection()?;
+    let db = Database::create_connection(".git/info/todo.sqlite")?;
     let _ = db.create_table_if_not_exists();
 
     let command = Command::parse_from_args()?;
     match command {
         Command::List => {
-            let items = db.list_items_on_branch(&branch)?;
-            for (index, item) in items.iter().enumerate() {
-                println!("{} {}", index + 1, item.content);
+            let items = db.list_todos_on_branch(&branch)?;
+            let items = items.iter().enumerate();
+            for (index, item) in items {
+                println!("{}\t{}", index + 1, item.content);
             }
-            Ok(())
         }
         Command::Todo(content) => {
-            let _ = db.add_todo_item(&branch, &content);
-            println!("Added it!");
-            Ok(())
+            let affects = db.create_todo(&branch, &content);
+            if affects > 0 { println!("Added it!") } else { println!("Nothing is added!") };
         }
         Command::Done(index) => {
-            let affects = db.delete_item_by_order_number(&branch, index)?;
-            if affects > 0 {
-                println!("DONE! Good Job!");
-            } else {
-                println!("Nothing is DONE!");
-            }
-            Ok(())
+            let affects = db.delete_todo(&branch, index)?;
+            if affects > 0 { println!("DONE! Good Job!") } else { println!("Nothing is DONE!") };
         }
         Command::Help => {
             println!("Usage: todo [command] [args]");
             println!("Commands:");
             println!("  git todo               - List all todos");
             println!("  git todo [text [text]] - Add a new todo");
-            println!("  git todo done [index]  - Mark a todo as done");
-            Ok(())
+            println!("  git todo done [index|-]  - Mark a todo as done");
         }
-    }
+    };
+    Ok(())
 }
 
 enum Command {
@@ -71,7 +62,6 @@ impl Command {
                 Ok(index) => index,
                 Err(err) => return Err(format!("{}", err)),
             };
-
             return Ok(Command::Done(index));
         }
         if args[1] == "-h" || args[1] == "--help" {
@@ -86,8 +76,8 @@ struct Database {
 }
 
 impl Database {
-    fn create_connection() -> Result<Database, String> {
-        match Connection::open(".git/info/todo.sqlite") {
+    fn create_connection(path: &str) -> Result<Database, String> {
+        match Connection::open(path) {
             Ok(conn) => Ok(Database { conn }),
             Err(err) => Err(format!("failed to write: {}", err)),
         }
@@ -104,26 +94,18 @@ impl Database {
         ).unwrap_or_default()
     }
 
-    fn add_todo_item(&self, branch: &str, content: &str) -> usize {
+    fn create_todo(&self, branch: &str, content: &str) -> usize {
         self.conn.execute(
             "INSERT INTO todos (branch, content) VALUES (?1, ?2)",
             (branch, content),
         ).unwrap_or_default()
     }
 
-    fn delete_todo_item(&self, id: i32) -> usize {
-        self.conn.execute("DELETE FROM todos WHERE id = ?1", (id,)).unwrap_or_default()
-    }
-
-    fn list_items_on_branch(&self, branch: &str) -> Result<Vec<Todo>, String> {
+    fn list_todos_on_branch(&self, branch: &str) -> Result<Vec<Todo>, String> {
         let mut stmt = self.conn.prepare("SELECT id, branch, content FROM todos WHERE branch = ?1 ORDER BY id ASC").unwrap();
         let todos = stmt
             .query_map([branch, ], |row| {
-                Ok(Todo {
-                    id: row.get(0)?,
-                    branch: row.get(1)?,
-                    content: row.get(2)?,
-                })
+                Ok(Todo { id: row.get(0)?, branch: row.get(1)?, content: row.get(2)? })
             });
         let todos = match todos {
             Ok(todos) => todos,
@@ -133,12 +115,12 @@ impl Database {
         Ok(todos)
     }
 
-    fn delete_item_by_order_number(&self, branch: &str, order_number: i32) -> Result<usize, String> {
-        let items = self.list_items_on_branch(branch)?;
+    fn delete_todo(&self, branch: &str, order_number: i32) -> Result<usize, String> {
+        let items = self.list_todos_on_branch(branch)?;
         let items = items.iter().enumerate();
         for (index, item) in items {
             if index + 1 == order_number as usize {
-                return Ok(self.delete_todo_item(item.id));
+                return Ok(self.conn.execute("DELETE FROM todos WHERE id = ?1", (item.id,)).unwrap_or_default());
             }
         }
         Ok(0)
@@ -153,10 +135,8 @@ struct Todo {
     content: String,
 }
 
-struct Git {}
-
-impl Git {
-    fn get_current_branch() -> Result<String, String> {
+mod git {
+    pub fn get_current_branch() -> Result<String, String> {
         let output = std::process::Command::new("git")
             .arg("symbolic-ref")
             .arg("--short")
