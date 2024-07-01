@@ -13,6 +13,14 @@ Commands:
 
 ![20240629015816_rec_](https://github.com/dspo/git-todo/assets/25881576/806cb7d9-25ff-4ea7-9cb6-a464e25a9318)
 
+## install
+
+### brew
+
+```shell
+brew install dspo/tools/git-todo
+```
+
 ### build
 
 ```shell
