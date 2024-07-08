@@ -67,7 +67,7 @@ git todo # response empty
 
 ### Mark some todo item as done on the specific branch
 
-`git todo done <branch>:<index>` or `git todo - <branch>:<index>
+`git todo done <branch>:<index>` or `git todo - <branch>:<index>`
 
 ```shell
 git todo -a
@@ -94,7 +94,8 @@ git todo -a
 brew install dspo/tools/git-todo
 ```
 
-It will download the source code and build it locally by using `brew install`, which pulls a number of dependencies, including libgit2, z3, llvm, pkg-config and rust.
+It will download the source code and build it locally by using `brew install`, which pulls a number of dependencies,
+including *libgit2*, *z3*, *llvm*, *pkg-config* and *rust*.
 If you don't want to install these dependencies, you can download the compiled binary from the repository's release page.
 
 ### build
