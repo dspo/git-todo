@@ -55,11 +55,7 @@ fn execute() -> Result<(), String> {
             };
         }
         Command::Help => {
-            println!("Usage: todo [command] [args]");
-            println!("Commands:");
-            println!("  git todo               - List all todos");
-            println!("  git todo [text [text]] - Add a new todo");
-            println!("  git todo done [index|-]  - Mark a todo as done");
+            println!("More usages see https://github.com/dspo/git-todo?tab=readme-ov-file#usage");
         }
     };
     Ok(())
@@ -79,7 +75,14 @@ impl Command {
         if args.len() <= 1 {
             return Ok(Command::List(branch, false));
         }
-        if args.len() <= 2 && (vec! [ String::from("-a"), String::from("--all"), String::from("--all-branches") ].contains(&args[1])) {
+        if args.len() <= 2
+            && (vec![
+                String::from("-a"),
+                String::from("--all"),
+                String::from("--all-branches"),
+            ]
+            .contains(&args[1]))
+        {
             return Ok(Command::List(branch, true));
         }
         if args[1] == "done" || args[1] == "-" {
