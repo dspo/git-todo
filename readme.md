@@ -1,6 +1,6 @@
 # git todo
 
-`git todo` list/add/done todo item on current branch.
+`git todo` list/add/done todo item on branch.
 
 ## Usage
 
