@@ -7,24 +7,38 @@ fn main() {
 }
 
 fn execute() -> Result<(), String> {
-    let branch = match git::get_current_branch() {
-        Ok(branch) => branch,
-        Err(err) => return Err(format!("failed to get current branch: {}", err)),
-    };
-
     let db = Database::create_connection(".git/info/todo.sqlite")?;
     let _ = db.create_table_if_not_exists();
 
     let command = Command::parse_from_args()?;
     match command {
-        Command::List => {
+        Command::List(branch, true) => {
+            let items = db.list_all_todos()?;
+            let items = items.iter().enumerate();
+            let mut last_branch = "";
+            let mut index = 0;
+            for (_, item) in items {
+                if item.branch.as_str().ne(last_branch) {
+                    index = 0;
+                    last_branch = &item.branch;
+                    if item.branch.eq(&branch) {
+                        println!("*{}", item.branch);
+                    } else {
+                        println!(" {}", item.branch);
+                    }
+                }
+                index += 1;
+                println!("\t{}  {}", index, item.content);
+            }
+        }
+        Command::List(branch, false) => {
             let items = db.list_todos_on_branch(&branch)?;
             let items = items.iter().enumerate();
             for (index, item) in items {
-                println!("{}\t{}", index + 1, item.content);
+                println!("{}  {}", index + 1, item.content);
             }
         }
-        Command::Todo(content) => {
+        Command::Todo(branch, content) => {
             let affects = db.create_todo(&branch, &content);
             if affects > 0 {
                 println!("Added it!")
@@ -32,7 +46,7 @@ fn execute() -> Result<(), String> {
                 println!("Nothing is added!")
             };
         }
-        Command::Done(index) => {
+        Command::Done(branch, index) => {
             let affects = db.delete_todo(&branch, index)?;
             if affects > 0 {
                 println!("DONE! Good Job!")
@@ -52,32 +66,42 @@ fn execute() -> Result<(), String> {
 }
 
 enum Command {
-    List,
-    Todo(String),
-    Done(i32),
+    List(String, bool),
+    Todo(String, String),
+    Done(String, i32),
     Help,
 }
 
 impl Command {
     fn parse_from_args() -> Result<Command, String> {
+        let branch = git::get_current_branch()?;
         let args: Vec<String> = std::env::args().collect();
-        if args.len() < 2 {
-            return Ok(Command::List);
+        if args.len() <= 1 {
+            return Ok(Command::List(branch, false));
+        }
+        if args.len() <= 2 && (vec! [ String::from("-a"), String::from("--all"), String::from("--all-branches") ].contains(&args[1])) {
+            return Ok(Command::List(branch, true));
         }
         if args[1] == "done" || args[1] == "-" {
             if args.len() < 3 {
                 return Err("missing done index".to_string());
             }
-            let index = match args[2].parse::<i32>() {
+            let branch_index: Vec<String> = args[2].split(':').map(String::from).collect();
+            let (branch, index) = if branch_index.len() == 1 {
+                (branch, args[2].clone())
+            } else {
+                (branch_index[0].clone(), branch_index[1].clone())
+            };
+            let index = match index.parse::<i32>() {
                 Ok(index) => index,
                 Err(err) => return Err(format!("{}", err)),
             };
-            return Ok(Command::Done(index));
+            return Ok(Command::Done(branch, index));
         }
         if args[1] == "-h" || args[1] == "--help" {
             return Ok(Command::Help);
         }
-        Ok(Command::Todo(args[1..].join(" ")))
+        Ok(Command::Todo(branch, args[1..].join(" ")))
     }
 }
 
@@ -132,6 +156,29 @@ impl Database {
             Err(err) => return Err(format!("failed to list items: {}", err)),
         };
         let todos = todos.into_iter().map(|todo| todo.unwrap()).collect();
+        Ok(todos)
+    }
+
+    fn list_all_todos(&self) -> Result<Vec<Todo>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, branch, content FROM todos ORDER BY branch, id ASC")
+            .unwrap();
+        let todos = stmt.query_map([], |row| {
+            Ok(Todo {
+                id: row.get(0)?,
+                branch: row.get(1)?,
+                content: row.get(2)?,
+            })
+        });
+        let todos = match todos {
+            Ok(todos) => todos,
+            Err(err) => return Err(format!("failed to list items: {}", err)),
+        };
+        let todos = todos
+            .into_iter()
+            .map(|result_todo| result_todo.unwrap())
+            .collect();
         Ok(todos)
     }
 
