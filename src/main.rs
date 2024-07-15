@@ -52,6 +52,9 @@ fn execute() -> Result<(), error::Error> {
                 println!("Nothing is DONE!")
             };
         }
+        Command::UI => {
+            floem::launch(ui::app_view);
+        }
         Command::Help => {
             println!("More usages see https://github.com/dspo/git-todo?tab=readme-ov-file#usage");
         }
@@ -63,6 +66,7 @@ enum Command {
     List(String, bool),
     Todo(String, String),
     Done(String, i32),
+    UI,
     Help,
 }
 
@@ -87,6 +91,9 @@ impl Command {
                 Err(err) => return Err(error::Error::from_normal_error(err)),
             };
             return Ok(Command::Done(branch, index));
+        }
+        if args[1] == "--ui" {
+            return Ok(Command::UI)
         }
         if args[1] == "-h" || args[1] == "--help" {
             return Ok(Command::Help);
@@ -228,5 +235,33 @@ mod error {
         fn from(value: &str) -> Self {
             Self::from(value.to_string())
         }
+    }
+}
+
+mod ui {
+    use floem::{
+        reactive::create_signal,
+        views::{label, Decorators, ButtonClass},
+        IntoView,
+    };
+
+    pub(crate) fn app_view() -> impl IntoView {
+        // Create a reactive signal with a counter value, defaulting to 0
+        let (counter, set_counter) = create_signal(0);
+
+        // Create a vertical layout
+        (
+            // The counter value updates automatically, thanks to reactivity
+            label(move || format!("Value: {}", counter.get())),
+            // Create a horizontal layout
+            (
+                "Increment".class(ButtonClass).on_click_stop(move |_| {
+                    set_counter.update(|value| *value += 1);
+                }),
+                "Decrement".class(ButtonClass).on_click_stop(move |_| {
+                    set_counter.update(|value| *value -= 1);
+                }),
+            ),
+        ).style(|s| s.flex_col())
     }
 }
