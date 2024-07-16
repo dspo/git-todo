@@ -1131,6 +1131,7 @@ name = "git-todo"
 version = "0.1.0"
 dependencies = [
  "floem",
+ "im",
  "rusqlite",
 ]
 

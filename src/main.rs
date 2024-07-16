@@ -52,8 +52,8 @@ fn execute() -> Result<(), error::Error> {
                 println!("Nothing is DONE!")
             };
         }
-        Command::UI => {
-            floem::launch(ui::app_view);
+        Command::UI(branch) => {
+            ui::run_new_window(&branch, db);
         }
         Command::Help => {
             println!("More usages see https://github.com/dspo/git-todo?tab=readme-ov-file#usage");
@@ -66,7 +66,7 @@ enum Command {
     List(String, bool),
     Todo(String, String),
     Done(String, i32),
-    UI,
+    UI(String),
     Help,
 }
 
@@ -74,16 +74,25 @@ impl Command {
     fn parse_from_args() -> Result<Command, error::Error> {
         let branch = git::get_current_branch()?;
         let args: Vec<String> = std::env::args().collect();
-        if args.len() <= 1 {
+        if args.len() == 1 {
             return Ok(Command::List(branch, false));
         }
-        if args.len() <= 2 && ([String::from("-a"), String::from("--all"), String::from("--all-branches")].contains(&args[1])) {
-            return Ok(Command::List(branch, true));
-        }
-        if args[1] == "done" || args[1] == "-" {
-            if args.len() < 3 {
+        let arg_1 = &args[1];
+        if args.len() == 2 {
+            if ["-a".to_string(), "--all".to_string(), "--all-branches".to_string()].contains(&arg_1) {
+                return Ok(Command::List(branch, true));
+            }
+            if ["--ui".to_string(), "-i".to_string(), "ui".to_string(), "i".to_string()].contains(&arg_1) {
+                return Ok(Command::UI(branch));
+            }
+            if ["-h".to_string(), "--help".to_string()].contains(&arg_1) {
+                return Ok(Command::Help);
+            }
+            if ["done".to_string(), "-".to_string()].contains(&arg_1) {
                 return Err(error::Error::from("missing done index"));
             }
+        }
+        if args.len() == 3 && ["done".to_string(), "-".to_string()].contains(&arg_1) {
             let branch_index: Vec<String> = args[2].split(':').map(String::from).collect();
             let (branch, index) = if branch_index.len() == 1 { (branch, args[2].clone()) } else { (branch_index[0].clone(), branch_index[1].clone()) };
             let index = match index.parse::<i32>() {
@@ -91,12 +100,6 @@ impl Command {
                 Err(err) => return Err(error::Error::from_normal_error(err)),
             };
             return Ok(Command::Done(branch, index));
-        }
-        if args[1] == "--ui" {
-            return Ok(Command::UI)
-        }
-        if args[1] == "-h" || args[1] == "--help" {
-            return Ok(Command::Help);
         }
         Ok(Command::Todo(branch, args[1..].join(" ")))
     }
@@ -167,7 +170,7 @@ mod dao {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Todo {
         id: i32,
         pub(crate) branch: String,
@@ -241,27 +244,96 @@ mod error {
 mod ui {
     use floem::{
         reactive::create_signal,
-        views::{label, Decorators, ButtonClass},
+        views::{label, Decorators},
         IntoView,
     };
 
-    pub(crate) fn app_view() -> impl IntoView {
-        // Create a reactive signal with a counter value, defaulting to 0
-        let (counter, set_counter) = create_signal(0);
+    use crate::{dao, git};
 
-        // Create a vertical layout
-        (
-            // The counter value updates automatically, thanks to reactivity
-            label(move || format!("Value: {}", counter.get())),
-            // Create a horizontal layout
-            (
-                "Increment".class(ButtonClass).on_click_stop(move |_| {
-                    set_counter.update(|value| *value += 1);
-                }),
-                "Decrement".class(ButtonClass).on_click_stop(move |_| {
-                    set_counter.update(|value| *value -= 1);
-                }),
+    use floem::event::EventListener;
+    use floem::kurbo::Size;
+    use floem::window::{WindowButtons, WindowConfig};
+    use floem::{
+        peniko::Color,
+        style::JustifyContent,
+        views::{checkbox, container, scroll, stack, virtual_list, VirtualDirection, VirtualItemSize, VirtualVector},
+    };
+
+    pub(crate) fn run_new_window(branch: &str, db: dao::DatabaseAccess) {
+        let app = floem::Application::new().window(
+            move |_| enhanced_list(db),
+            Some(
+                WindowConfig::default()
+                    .size(Size::new(300.0, 500.0))
+                    .resizable(true)
+                    .title(branch)
+                    .with_mac_os_config(|c| c.hide_titlebar(false).hide_titlebar_buttons(true).enable_shadow(false).transparent_title_bar(true))
+                    .enabled_buttons(WindowButtons::CLOSE),
             ),
-        ).style(|s| s.flex_col())
+        );
+        app.run()
+    }
+
+    pub(crate) fn enhanced_list(db: dao::DatabaseAccess) -> impl IntoView {
+        let branch = git::get_current_branch().expect("");
+        let todos = db.list_todos_on_branch(&branch).expect("");
+        let mut todo_list = im::Vector::new();
+        for item in todos.into_iter() {
+            todo_list.push_back(item.content);
+        }
+        let (todos, _set_todos) = create_signal(todo_list);
+        let item_height = 24.0;
+        scroll(
+            virtual_list(
+                VirtualDirection::Vertical,
+                VirtualItemSize::Fixed(Box::new(|| 28.0)),
+                move || todos.get().enumerate(),
+                move |(i, _item)| *i,
+                move |(index, item)| {
+                    let (is_checked, set_is_checked) = create_signal(true);
+                    container({
+                        stack({
+                            (
+                                checkbox(move || is_checked.get()).style(|s| s.margin_left(6)).on_click_stop(move |_| {
+                                    set_is_checked.update(|checked: &mut bool| *checked = !*checked);
+                                }),
+                                label(move || item.to_string()).style(|s| s.margin_left(6).height(18.0).font_size(16.0).items_center()),
+                                container({
+                                    label(move || " ❌ ")
+                                        .on_click_stop(move |_| {
+                                            print!("Item Removed");
+                                            _set_todos.update(|x| {
+                                                x.remove(index);
+                                            });
+                                        })
+                                        .style(|s| {
+                                            s.height(16.0)
+                                                // .font_weight(Weight::BOLD)
+                                                .color(Color::RED)
+                                                .border(1.0)
+                                                .border_color(Color::RED)
+                                                .border_radius(16.0)
+                                                .margin_right(20.0)
+                                                .hover(|s| s.color(Color::WHITE).background(Color::RED))
+                                        })
+                                })
+                                .style(|s| s.flex_basis(0).flex_grow(1.0).justify_content(Some(JustifyContent::FlexEnd))),
+                            )
+                        })
+                        .style(move |s| s.height_full().width_full().items_center())
+                    })
+                    .style(move |s| {
+                        s.flex_row()
+                            .items_center()
+                            .height(item_height)
+                            .apply_if(index != 0, |s| s.border_top(1.0).border_color(Color::LIGHT_GRAY))
+                    })
+                },
+            )
+            .style(move |s| s.flex_col().flex_grow(1.0)),
+        )
+        .style(move |s| s.width_full().height_full().border(1.0))
+        .on_event_stop(EventListener::WindowClosed, move |_| std::process::exit(0))
+        // .on_event_stop(EventListener::WindowLostFocus, move |_| { println!("lost focus"); std::process::exit(0) })
     }
 }
