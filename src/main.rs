@@ -45,7 +45,7 @@ fn execute() -> Result<(), error::Error> {
             };
         }
         Command::Done(branch, index) => {
-            let affects = db.delete_todo(&branch, index)?;
+            let affects = db.delete_todo_by_branch_order_number(&branch, index)?;
             if affects > 0 {
                 println!("DONE! Good Job!")
             } else {
@@ -53,7 +53,7 @@ fn execute() -> Result<(), error::Error> {
             };
         }
         Command::UI(branch) => {
-            ui::run_new_window(&branch, db);
+            ui::run(branch, db);
         }
         Command::Help => {
             println!("More usages see https://github.com/dspo/git-todo?tab=readme-ov-file#usage");
@@ -159,20 +159,24 @@ mod dao {
             Ok(list)
         }
 
-        pub(crate) fn delete_todo(&self, branch: &str, order_number: i32) -> Result<usize, rusqlite::Error> {
+        pub(crate) fn delete_todo_by_branch_order_number(&self, branch: &str, order_number: i32) -> Result<usize, rusqlite::Error> {
             let items = self.list_todos_on_branch(branch)?;
             for (index, item) in items.iter().enumerate() {
                 if index + 1 == order_number as usize {
-                    return self.0.execute("DELETE FROM todos WHERE id = ?1", (item.id,));
+                    return self.delete_todo(item.id);
                 }
             }
             Ok(0)
+        }
+
+        pub(crate) fn delete_todo(&self, id: i32 ) -> Result<usize, rusqlite::Error> {
+            return self.0.execute("DELETE FROM todos WHERE id = ?1", (id,));
         }
     }
 
     #[derive(Debug, Clone)]
     pub struct Todo {
-        id: i32,
+        pub(crate) id: i32,
         pub(crate) branch: String,
         pub(crate) content: String,
     }
@@ -248,25 +252,27 @@ mod ui {
         IntoView,
     };
 
-    use crate::{dao, git};
+    use crate::{dao};
 
+    use crate::dao::Todo;
     use floem::event::EventListener;
     use floem::kurbo::Size;
     use floem::window::{WindowButtons, WindowConfig};
     use floem::{
         peniko::Color,
-        style::JustifyContent,
         views::{checkbox, container, scroll, stack, virtual_list, VirtualDirection, VirtualItemSize, VirtualVector},
     };
+    use im::Vector;
 
-    pub(crate) fn run_new_window(branch: &str, db: dao::DatabaseAccess) {
+    pub(crate) fn run(branch: String, db: dao::DatabaseAccess) {
+        let title = &branch.clone();
         let app = floem::Application::new().window(
-            move |_| enhanced_list(db),
+            move |_| enhanced_list(&branch, db),
             Some(
                 WindowConfig::default()
                     .size(Size::new(300.0, 500.0))
                     .resizable(true)
-                    .title(branch)
+                    .title(title)
                     .with_mac_os_config(|c| c.hide_titlebar(false).hide_titlebar_buttons(true).enable_shadow(false).transparent_title_bar(true))
                     .enabled_buttons(WindowButtons::CLOSE),
             ),
@@ -274,50 +280,40 @@ mod ui {
         app.run()
     }
 
-    pub(crate) fn enhanced_list(db: dao::DatabaseAccess) -> impl IntoView {
-        let branch = git::get_current_branch().expect("");
+    pub(crate) fn enhanced_list(branch: &str, db: dao::DatabaseAccess) -> impl IntoView {
         let todos = db.list_todos_on_branch(&branch).expect("");
-        let mut todo_list = im::Vector::new();
-        for item in todos.into_iter() {
-            todo_list.push_back(item.content);
-        }
-        let (todos, _set_todos) = create_signal(todo_list);
+        let todo_list: Vector<Todo> = todos.into_iter().collect();
+        let (todos, set_todos) = create_signal(todo_list);
         let item_height = 24.0;
         scroll(
             virtual_list(
                 VirtualDirection::Vertical,
                 VirtualItemSize::Fixed(Box::new(|| 28.0)),
                 move || todos.get().enumerate(),
-                move |(i, _item)| *i,
+                move |(index, _item)| *index,
                 move |(index, item)| {
-                    let (is_checked, set_is_checked) = create_signal(true);
+                    let (is_checked, set_is_checked) = create_signal(false);
+
                     container({
                         stack({
                             (
-                                checkbox(move || is_checked.get()).style(|s| s.margin_left(6)).on_click_stop(move |_| {
-                                    set_is_checked.update(|checked: &mut bool| *checked = !*checked);
+                                checkbox(move || is_checked.get()).style(|s| s.margin_left(6)).on_update(move |checked| {
+                                    set_is_checked.set(checked);
+                                    println!("checkbox: {}, index: {}, item.id: {}", is_checked.get(), index, item.id);
+                                    if is_checked.get() {
+                                        set_todos.update(|x| {
+                                            x.remove((&index).clone());
+                                        });
+                                    }
                                 }),
-                                label(move || item.to_string()).style(|s| s.margin_left(6).height(18.0).font_size(16.0).items_center()),
-                                container({
-                                    label(move || " ❌ ")
-                                        .on_click_stop(move |_| {
-                                            print!("Item Removed");
-                                            _set_todos.update(|x| {
-                                                x.remove(index);
-                                            });
+                                label(move || format!("{}\t{}", index+1, item.content))
+                                    .style(|s| s.margin_left(6).height(18.0).font_size(16.0).items_center())
+                                    .on_double_click_stop(move |_| {
+                                        set_todos.update(|x| {
+                                            println!("double click: {}", index);
+                                            x.remove(index);
                                         })
-                                        .style(|s| {
-                                            s.height(16.0)
-                                                // .font_weight(Weight::BOLD)
-                                                .color(Color::RED)
-                                                .border(1.0)
-                                                .border_color(Color::RED)
-                                                .border_radius(16.0)
-                                                .margin_right(20.0)
-                                                .hover(|s| s.color(Color::WHITE).background(Color::RED))
-                                        })
-                                })
-                                .style(|s| s.flex_basis(0).flex_grow(1.0).justify_content(Some(JustifyContent::FlexEnd))),
+                                    }),
                             )
                         })
                         .style(move |s| s.height_full().width_full().items_center())
