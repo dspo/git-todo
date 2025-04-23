@@ -260,10 +260,18 @@ mod ui {
     use floem::event::EventListener;
     use floem::kurbo::Size;
     use floem::reactive::create_effect;
+    use floem::text::Weight;
     use floem::window::{WindowButtons, WindowConfig};
     use floem::{prelude::*, IntoView};
     use im::Vector;
     use std::rc::Rc;
+
+    // Source: https://www.svgrepo.com/svg/505349/cross | License: MIT
+    pub const CROSS_SVG: &str = r##"
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M19 5L5 19M5.00001 5L19 19" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+"##;
 
     pub(crate) fn run(branch: String, db: dao::DatabaseAccess) {
         let title = &branch.clone();
@@ -294,30 +302,58 @@ mod ui {
 
         let label = |item: String| item.style(|s| s.margin_left(6).height(32.0).font_size(22.0).items_center());
 
-        VirtualStack::list_with_view(
-            move || todo_list.get().enumerate(),
-            move |(index, (state, item))| {
-                let db0 = db.clone();
+        let x_mark = {
+            let db = db.clone();
+            move |index, item_id: i32| {
+                svg(CROSS_SVG)
+                    .on_click_stop({
+                        let db = db.clone();
+                        move |_| {
+                            todo_list.update(|list| {
+                                db.delete_todo(item_id).expect("failed to delete item");
+                                list.remove(index);
+                            });
+                        }
+                    })
+                    .style(|s| {
+                        s.size(18.0, 18.)
+                            .font_weight(Weight::BOLD)
+                            .color(palette::css::RED)
+                            .border(1.0)
+                            .border_color(palette::css::RED)
+                            .border_radius(16.0)
+                            .padding(2.)
+                            .margin_right(20.0)
+                            .hover(|s| s.color(palette::css::WHITE).background(palette::css::RED))
+                    })
+            }
+        };
 
+        VirtualStack::list_with_view(move || todo_list.get().enumerate(), {
+            let db = db.clone();
+            move |(index, (state, item)): (usize, (bool, Todo))| {
                 let checkbox_state = RwSignal::new(state);
-                create_effect(move |_| {
-                    if checkbox_state.get() {
-                        todo_list.update(|list| {
-                            db0.delete_todo(item.id).expect("failed to delete item");
-                            list.remove(index);
-                        });
+                create_effect({
+                    let db = db.clone();
+                    move |_| {
+                        if checkbox_state.get() {
+                            todo_list.update(|list| {
+                                db.delete_todo(item.id).expect("failed to delete item");
+                                list.remove(index);
+                            });
+                        }
                     }
                 });
 
-                (checkmark(checkbox_state), label(item.content)).h_stack().style(move |s| {
+                (checkmark(checkbox_state), label(item.content), x_mark(index, item.id)).h_stack().style(move |s| {
                     s.flex_row()
                         .width_full()
                         .items_center()
                         .height(item_height)
                         .apply_if(index != 0, |s| s.border_top(1.0).border_color(LIGHT_GRAY))
                 })
-            },
-        )
+            }
+        })
         .style(move |s| s.flex_col().flex_grow(1.0))
         .scroll()
         .style(move |s| s.width_full().height_full().border(1.0))
